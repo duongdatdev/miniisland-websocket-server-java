@@ -75,40 +75,84 @@ public class MonsterData {
     /**
      * Update AI movement - called every server tick
      */
-    public void updateAI() {
+    /**
+     * Update AI movement - called every server tick
+     * @param players List of players to potentially chase
+     */
+    public void updateAI(java.util.List<ClientInfo> players) {
         if (!alive) return;
         
-        moveTimer++;
-        if (moveTimer >= moveDuration) {
-            moveTimer = 0;
-            moveDirection = random.nextInt(4) + 1;
-            moveDuration = random.nextInt(60) + 30; // 1-3 seconds at 30 FPS
+        // Find nearest player
+        ClientInfo target = null;
+        double minDst = 300.0; // Vision range
+        
+        if (players != null) {
+            for (ClientInfo p : players) {
+                 if (p != null && p.isAlive && "hunt".equals(p.getMap())) {
+                     double dst = Math.sqrt(Math.pow(x - p.getX(), 2) + Math.pow(y - p.getY(), 2));
+                     if (dst < minDst) {
+                         minDst = dst;
+                         target = p;
+                     }
+                 }
+            }
         }
         
-        int newX = x;
-        int newY = y;
-        
-        switch (moveDirection) {
-            case 1: // Down
-                newY += speed;
-                break;
-            case 2: // Up
-                newY -= speed;
-                break;
-            case 3: // Left
-                newX -= speed;
-                break;
-            case 4: // Right
-                newX += speed;
-                break;
+        if (target != null) {
+            // Chase logic
+            double dx = target.getX() - x;
+            double dy = target.getY() - y;
+            double length = Math.sqrt(dx * dx + dy * dy);
+            
+            if (length > 0) {
+                // Move towards player
+                x += (int) (dx / length * speed);
+                y += (int) (dy / length * speed);
+                
+                // Update internal direction for potential animation sync (if needed later)
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    moveDirection = dx > 0 ? 4 : 3;
+                } else {
+                    moveDirection = dy > 0 ? 1 : 2;
+                }
+            }
+        } else {
+            // Idle / Random movement logic
+            moveTimer++;
+            if (moveTimer >= moveDuration) {
+                moveTimer = 0;
+                moveDirection = random.nextInt(4) + 1;
+                moveDuration = random.nextInt(60) + 30; // 1-3 seconds at 30 FPS
+            }
+            
+            int newX = x;
+            int newY = y;
+            
+            switch (moveDirection) {
+                case 1: // Down
+                    newY += speed;
+                    break;
+                case 2: // Up
+                    newY -= speed;
+                    break;
+                case 3: // Left
+                    newX -= speed;
+                    break;
+                case 4: // Right
+                    newX += speed;
+                    break;
+            }
+            
+            x = newX;
+            y = newY;
         }
         
         // Clamp to map bounds (account for monster size ~48px)
-        x = Math.max(MIN_BOUND, Math.min(newX, MAX_BOUND - 48));
-        y = Math.max(MIN_BOUND, Math.min(newY, MAX_BOUND - 48));
+        x = Math.max(MIN_BOUND, Math.min(x, MAX_BOUND - 48));
+        y = Math.max(MIN_BOUND, Math.min(y, MAX_BOUND - 48));
         
-        // Change direction if hitting boundary
-        if (x == MIN_BOUND || x == MAX_BOUND - 48 || y == MIN_BOUND || y == MAX_BOUND - 48) {
+        // Change direction if hitting boundary (only for random move, chase ignores this for fluid sliding along wall)
+        if (target == null && (x == MIN_BOUND || x == MAX_BOUND - 48 || y == MIN_BOUND || y == MAX_BOUND - 48)) {
             moveDirection = random.nextInt(4) + 1;
         }
     }

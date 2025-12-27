@@ -789,7 +789,7 @@ public class WebSocketGameServer extends WebSocketServer {
                 // Update all monster AI (server-side movement)
                 for (MonsterData m : huntMonsters.values()) {
                     if (m.alive) {
-                        m.updateAI();
+                        m.updateAI(playerOnline);
                     }
                 }
                 
