@@ -236,8 +236,7 @@ public class ShopDAO {
             skinRs.close();
             skinStmt.close();
             
-            // Check if skin is available (folder 1, 2)
-            if (!skinFolder.equals("1") && !skinFolder.equals("2")) {
+            if (!skinFolder.equals("1") && !skinFolder.equals("2") && !skinFolder.equals("3")) {
                 return "Error|Coming soon!";
             }
             

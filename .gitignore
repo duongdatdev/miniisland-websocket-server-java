@@ -47,13 +47,30 @@ bin/
 ### OS ###
 .DS_Store
 Thumbs.db
+desktop.ini
+ehthumbs.db
 
 ### Logs ###
 *.log
 logs/
 
+### Build errors ###
+compile_errors.txt
+
+### Environment ###
+.env
+.env.local
+.env.*.local
+*.env
+
+### Backup files ###
+*.bak
+*.backup
+*~
+*.swp
+*.swo
+
 ### Package files ###
-*.jar
 *.war
 *.zip
 *.tar.gz
@@ -61,3 +78,4 @@ logs/
 ### Database ###
 *.db
 *.sqlite
+*.sqlite3

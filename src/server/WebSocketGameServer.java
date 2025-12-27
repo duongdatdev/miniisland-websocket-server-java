@@ -29,6 +29,18 @@ public class WebSocketGameServer extends WebSocketServer {
     private GameHistoryDAO gameHistoryDAO;
     private ShopDAO shopDAO;
 
+    // Monster Hunt
+    private java.util.Timer huntTimer;
+    private int huntTimeRemaining = 60;
+    private boolean huntActive = false;
+    private Map<String, Integer> huntScores = new HashMap<>();
+
+    // Monster synchronization - use ConcurrentHashMap for thread safety
+    private Map<Integer, MonsterData> huntMonsters = new java.util.concurrent.ConcurrentHashMap<>();
+    private int nextMonsterId = 1;
+    private int monsterUpdateTick = 0;
+    private java.util.Timer monsterTimer; // Fast timer for monster movement
+
     //Maze gen
     private MazeGen mazeGen = new MazeGen(10, 20);
     private boolean winMaze = true;
@@ -129,6 +141,16 @@ public class WebSocketGameServer extends WebSocketServer {
             handleMazeEnd(conn, sentence);
         } else if (sentence.startsWith("Shop,")) {
             handleShopRequest(conn, sentence);
+        } else if (sentence.startsWith("SpawnMonster")) {
+            broadcastToMap("hunt", sentence);
+        } else if (sentence.startsWith("MonsterDead")) {
+            handleMonsterDead(sentence);
+        } else if (sentence.startsWith("MonsterHit")) {
+            handleMonsterHit(sentence);
+        } else if (sentence.startsWith("BulletUpdate")) {
+            broadcastToMap("hunt", sentence);
+        } else if (sentence.startsWith("ScoreUpdate")) {
+            handleScoreUpdate(sentence);
         }
     }
 
@@ -253,7 +275,57 @@ public class WebSocketGameServer extends WebSocketServer {
 
         broadcastMessage(protocol.NewClientPacket(username, x, y, -1, playerOnline.size() + 1, p.getMap()));
         sendAllClientsInMap(p.getWebSocket(), map);
+        
+        // === FIX: Sync Skins on Teleport ===
+        // 1. Send this player's skin to everyone else in the new map
+        String mySkin = shopDAO.getEquippedSkin(username);
+        for (ClientInfo player : playerOnline) {
+            if (player != null && !player.getUsername().equals(username) && player.getMap().equals(map)) {
+                sendToClient(player.getWebSocket(), "ChangeSkin," + username + "," + mySkin);
+            }
+        }
+        
+        // 2. Send skins of everyone in the new map to this player
+        for (ClientInfo player : playerOnline) {
+            if (player != null && !player.getUsername().equals(username) && player.getMap().equals(map)) {
+                String otherSkin = shopDAO.getEquippedSkin(player.getUsername());
+                sendToClient(p.getWebSocket(), "ChangeSkin," + player.getUsername() + "," + otherSkin);
+            }
+        }
+        // ===================================
+
         broadcastMessage(sentence);
+        
+        // Monster Hunt Timer Logic
+        if (map.equals("hunt")) {
+            startHuntTimer();
+            
+            // Send all existing monsters to the new player
+            for (MonsterData m : huntMonsters.values()) {
+                if (m.alive) {
+                    sendToClient(p.getWebSocket(), "SpawnMonster," + m.id + "," + m.type + "," + m.x + "," + m.y);
+                }
+            }
+            
+            // Also send current time and wave
+            if (huntActive) {
+                sendToClient(p.getWebSocket(), "HuntTime," + huntTimeRemaining);
+                int wave = (180 - huntTimeRemaining) / 45 + 1;
+                sendToClient(p.getWebSocket(), "HuntWave," + wave);
+            }
+        } else {
+            // Check if anyone is left in hunt
+            boolean anyInHunt = false;
+            for (ClientInfo player : playerOnline) {
+                if (player.getMap().equals("hunt")) {
+                    anyInHunt = true;
+                    break;
+                }
+            }
+            if (!anyInHunt) {
+                stopHuntTimer();
+            }
+        }
     }
 
     private void handleEnterMaze(String sentence) {
@@ -656,5 +728,174 @@ public class WebSocketGameServer extends WebSocketServer {
                 sendToClient(conn, "Shop,Error,Unknown action");
                 break;
         }
+    }
+
+    // === Monster Hunt Helper Methods ===
+    
+    private void startHuntTimer() {
+        if (huntActive) return;
+        huntActive = true;
+        huntTimeRemaining = 60;
+        huntScores.clear();
+        huntMonsters.clear();
+        nextMonsterId = 1;
+        monsterUpdateTick = 0;
+        
+        // Slow timer for game time and spawning (every 1 second)
+        huntTimer = new java.util.Timer();
+        huntTimer.scheduleAtFixedRate(new java.util.TimerTask() {
+            @Override
+            public void run() {
+                if (huntTimeRemaining > 0) {
+                    huntTimeRemaining--;
+                    // Broadcast time to all players in "hunt" map
+                    broadcastToMap("hunt", "HuntTime," + huntTimeRemaining);
+                    
+                    // Calculate and broadcast wave (every 45 seconds = 1 wave)
+                    int wave = (180 - huntTimeRemaining) / 45 + 1;
+                    broadcastToMap("hunt", "HuntWave," + wave);
+                    
+                    // Server-side Monster Spawning
+                    if (huntTimeRemaining % 3 == 0 && huntMonsters.size() < 15) { // Spawn every 3 seconds, max 15 monsters
+                        int x = 528 + (int)(Math.random() * 1296); // Within playable bounds
+                        int y = 528 + (int)(Math.random() * 1296);
+                        int type = (int)(Math.random() * 3); 
+                        int id = nextMonsterId++;
+                        
+                        // Track monster on server
+                        MonsterData monster = new MonsterData(id, type, x, y);
+                        huntMonsters.put(id, monster);
+                        
+                        broadcastToMap("hunt", "SpawnMonster," + id + "," + type + "," + x + "," + y);
+                    }
+                    
+                    // Remove dead monsters from tracking
+                    huntMonsters.entrySet().removeIf(e -> !e.getValue().alive);
+                } else {
+                    // End game
+                    broadcastToMap("hunt", "HuntEnd");
+                    stopHuntTimer();
+                }
+            }
+        }, 1000, 1000);
+        
+        // Fast timer for monster AI and position broadcasts (every 33ms = ~30 FPS)
+        monsterTimer = new java.util.Timer();
+        monsterTimer.scheduleAtFixedRate(new java.util.TimerTask() {
+            @Override
+            public void run() {
+                if (!huntActive) return;
+                
+                // Update all monster AI (server-side movement)
+                for (MonsterData m : huntMonsters.values()) {
+                    if (m.alive) {
+                        m.updateAI();
+                    }
+                }
+                
+                // Broadcast monster positions every tick for smooth movement
+                for (MonsterData m : huntMonsters.values()) {
+                    if (m.alive) {
+                        broadcastToMap("hunt", "MonsterUpdate," + m.id + "," + m.x + "," + m.y + "," + m.health);
+                    }
+                }
+            }
+        }, 33, 33); // Run every 33ms = ~30 FPS
+    }
+    
+    private void stopHuntTimer() {
+        if (huntTimer != null) {
+            huntTimer.cancel();
+            huntTimer = null;
+        }
+        if (monsterTimer != null) {
+            monsterTimer.cancel();
+            monsterTimer = null;
+        }
+        huntActive = false;
+        huntMonsters.clear();
+        nextMonsterId = 1;
+    }
+    
+    private void broadcastToMap(String mapName, String message) {
+        for (ClientInfo player : playerOnline) {
+            if (player != null && player.getMap().equals(mapName)) {
+                sendToClient(player.getWebSocket(), message);
+            }
+        }
+    }
+    
+    /**
+     * Handle monster hit from client - process damage server-side
+     * Format: MonsterHit,monsterId,damage,shooterUsername
+     */
+    private void handleMonsterHit(String sentence) {
+        String[] parts = sentence.split(",");
+        if (parts.length < 4) return;
+        
+        try {
+            int monsterId = Integer.parseInt(parts[1]);
+            int damage = Integer.parseInt(parts[2]);
+            String shooter = parts[3];
+            
+            MonsterData monster = huntMonsters.get(monsterId);
+            if (monster == null || !monster.alive) return;
+            
+            // Apply damage and check for death
+            int goldReward = monster.takeDamage(damage);
+            
+            // Broadcast health update to all clients
+            broadcastToMap("hunt", "MonsterUpdate," + monster.id + "," + monster.x + "," + monster.y + "," + monster.health);
+            
+            if (goldReward > 0) {
+                // Monster died - remove from tracking and broadcast death
+                huntMonsters.remove(monsterId);
+                broadcastToMap("hunt", "MonsterDead," + monsterId + "," + shooter + "," + goldReward);
+                
+                // Update shooter's score on server
+                int currentScore = huntScores.getOrDefault(shooter, 0);
+                huntScores.put(shooter, currentScore + goldReward);
+                broadcastHuntLeaderboard();
+                
+                System.out.println("[HUNT] " + shooter + " killed monster #" + monsterId + " for " + goldReward + " gold");
+            }
+        } catch (NumberFormatException e) {
+            System.err.println("Invalid MonsterHit packet: " + sentence);
+        }
+    }
+    
+    private void handleMonsterDead(String sentence) {
+        // MonsterDead,monsterId,killerName,points
+        String[] parts = sentence.split(",");
+        if (parts.length < 4) return;
+        
+        // Score is now handled by ScoreUpdate packet to support client-side combos/buffs
+        // String killer = parts[2];
+        // int points = Integer.parseInt(parts[3]);
+        // huntScores.put(killer, huntScores.getOrDefault(killer, 0) + points);
+        // broadcastHuntLeaderboard();
+        
+        broadcastToMap("hunt", sentence);
+    }
+    
+    private void handleScoreUpdate(String sentence) {
+        String[] parts = sentence.split(",");
+        if (parts.length < 3) return;
+        
+        String username = parts[1];
+        int score = Integer.parseInt(parts[2]);
+        
+        huntScores.put(username, score);
+        broadcastHuntLeaderboard();
+    }
+    
+    private void broadcastHuntLeaderboard() {
+        StringBuilder sb = new StringBuilder("HuntLeaderboard");
+        // Sort by score descending
+        huntScores.entrySet().stream()
+            .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
+            .forEach(entry -> sb.append(",").append(entry.getKey()).append(":").append(entry.getValue()));
+            
+        broadcastToMap("hunt", sb.toString());
     }
 }
