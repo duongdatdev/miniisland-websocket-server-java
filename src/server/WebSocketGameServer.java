@@ -774,6 +774,44 @@ public class WebSocketGameServer extends WebSocketServer {
                 } else {
                     // End game
                     broadcastToMap("hunt", "HuntEnd");
+                    
+                    // SAVE POINTS AND COINS
+                    if (!huntScores.isEmpty()) {
+                        System.out.println("Saving Monster Hunt results for " + huntScores.size() + " players");
+                        for (Map.Entry<String, Integer> entry : huntScores.entrySet()) {
+                            String username = entry.getKey();
+                            int score = entry.getValue();
+                            
+                            // 10% of score converted to rank points
+                            int points = score / 10;
+                            // 1:1 score to coins conversion
+                            int coins = score;
+                            
+                            if (points > 0) {
+                                playerService.updatePoint(username, points);
+                            }
+                            if (coins > 0) {
+                                shopDAO.addCoins(username, coins);
+                            }
+                            
+                            // Save to specific MonsterHunt history if needed, or generic game history
+                            // For now, using a simple log and updating the player's main stats
+                            System.out.println("Saved Hunt for " + username + ": " + points + " points, " + coins + " coins");
+                            
+                            // Save detailed game history
+                            gameHistoryDAO.saveHuntGameResult(username, score, points);
+                            
+                            // Optional: Send update to client so they see new coin balance immediately
+                            for (ClientInfo p : playerOnline) {
+                                if (p.getUsername().equals(username)) {
+                                    sendToClient(p.getWebSocket(), protocol.playerCoinsPacket(shopDAO.getPlayerCoins(username)));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    
+                    sendLeaderBoardToAllClient();
                     stopHuntTimer();
                 }
             }

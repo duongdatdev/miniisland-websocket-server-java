@@ -92,6 +92,44 @@ public class GameHistoryDAO {
             try { conn.close(); } catch (SQLException e) { e.printStackTrace(); }
         }
     }
+
+    /**
+     * Save Monster Hunt game result to database
+     * @param username player name
+     * @param score score obtained
+     * @param pointsEarned points added to leaderboard
+     * @return true if successful
+     */
+    public boolean saveHuntGameResult(String username, int score, int pointsEarned) {
+        Connection conn = DatabaseConnection.getConnection();
+        if (conn == null) return false;
+        
+        try {
+            // Create table if not exists
+            createGameHistoryTableIfNotExists(conn);
+            
+            String query = "INSERT INTO game_history (username, game_mode, score, coins_collected, points_earned, played_at) " +
+                          "VALUES (?, 'hunt', ?, ?, ?, NOW())";
+            PreparedStatement stmt = conn.prepareStatement(query);
+            stmt.setString(1, username);
+            stmt.setInt(2, score);
+            stmt.setInt(3, score); // In hunt, score = coins
+            stmt.setInt(4, pointsEarned);
+            
+            int rows = stmt.executeUpdate();
+            stmt.close();
+            
+            // For now, we don't have specific hunt stats table, but we count it towards total coins
+            // We could add updateHuntStats later if needed
+            
+            return rows > 0;
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
+        } finally {
+            try { conn.close(); } catch (SQLException e) { e.printStackTrace(); }
+        }
+    }
     
     /**
      * Create game_history table if not exists

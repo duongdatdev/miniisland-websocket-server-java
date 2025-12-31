@@ -94,7 +94,7 @@ public class PlayerDAOImp implements PlayerDAO {
     @Override
     public boolean playerExists(String username) {
         this.conn = DatabaseConnection.getConnection();
-        String query = "SELECT * FROM Users WHERE username = ?";
+        String query = "SELECT * FROM users WHERE username = ?";
         try (PreparedStatement statement = conn.prepareStatement(query)) {
             statement.setString(1, username);
             ResultSet resultSet = statement.executeQuery();
@@ -126,7 +126,7 @@ public class PlayerDAOImp implements PlayerDAO {
     public String updatePoint(String username,int pointPlus) {
         this.conn = DatabaseConnection.getConnection();
         try {
-            String query = "SELECT points FROM Users WHERE username=?";
+            String query = "SELECT points FROM users WHERE username=?";
             PreparedStatement preparedStatement = conn.prepareStatement(query);
             preparedStatement.setString(1, username);
 
@@ -138,7 +138,7 @@ public class PlayerDAOImp implements PlayerDAO {
                 int newPoint = point + pointPlus;
 
                 // update point
-                String updateQuery = "UPDATE Users SET points=? WHERE username=?";
+                String updateQuery = "UPDATE users SET points=? WHERE username=?";
                 PreparedStatement updateStatement = conn.prepareStatement(updateQuery);
                 updateStatement.setInt(1, newPoint);
                 updateStatement.setString(2, username);
