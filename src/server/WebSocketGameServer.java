@@ -111,7 +111,7 @@ public class WebSocketGameServer extends WebSocketServer {
             handleHello(conn, sentence, defaultX, defaultY);
         } else if (sentence.startsWith("Update")) {
             handleUpdate(sentence);
-        } else if (sentence.startsWith("TeleportToMap")) {
+        } else if (sentence.startsWith("TeleportToMap") || sentence.startsWith("TeleportMap")) {
             handleTeleportToMap(sentence);
         } else if (sentence.startsWith("EnterMaze")) {
             handleEnterMaze(sentence);
@@ -294,7 +294,12 @@ public class WebSocketGameServer extends WebSocketServer {
         }
         // ===================================
 
-        broadcastMessage(sentence);
+
+        // ===================================
+
+        // Force broadcasting as "TeleportToMap" so clients handle remote player updates correctly
+        String broadcastSentence = "TeleportToMap," + username + "," + map + "," + x + "," + y;
+        broadcastMessage(broadcastSentence);
         
         // Monster Hunt Timer Logic
         if (map.equals("hunt")) {
@@ -367,6 +372,7 @@ public class WebSocketGameServer extends WebSocketServer {
         playerService.updatePoint(username, 50);
         sendLeaderBoardToAllClient();
         sendAllClientsInMap(p.getWebSocket(), "lobby");
+        broadcastMessage("MazeWin," + username);
         teleportAllPlayerInMapToMap("maze", "lobby");
         winMaze = true;
     }
@@ -477,6 +483,32 @@ public class WebSocketGameServer extends WebSocketServer {
         int pointsToAdd = score / 20;
         if (won) {
             pointsToAdd += 50; // Bonus for winning maze
+            
+            // Broadcast win message
+            broadcastMessage("MazeWin," + username);
+            
+            // Move winner to lobby on server side
+            ClientInfo winner = null;
+            for (ClientInfo p : playerOnline) {
+                if (p.getUsername().equals(username)) {
+                    p.setMap("lobby");
+                    winner = p;
+                    break;
+                }
+            }
+            
+            if (winner != null) {
+                // Notify everyone that winner is now in lobby
+                broadcastMessage(protocol.NewClientPacket(username, 1645, 754, -1, playerOnline.size() + 1, "lobby"));
+                // Send lobby entities to winner
+                sendAllClientsInMap(winner.getWebSocket(), "lobby");
+            }
+            
+            // Teleport everyone else currently in maze to lobby
+            teleportAllPlayerInMapToMap("maze", "lobby");
+            
+            // Reset maze generation flag
+            winMaze = true;
         }
         
         // Calculate coins: collected coins + win bonus
