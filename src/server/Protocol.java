@@ -115,7 +115,7 @@ public class Protocol {
     // ============== Skin Shop Protocols ==============
     
     /**
-     * Gửi danh sách skins trong shop
+     * Send list of skins in shop
      */
     public String skinsListPacket(java.util.List<dao.ShopDAO.SkinItem> skins) {
         StringBuilder sb = new StringBuilder("SkinsList");
@@ -126,21 +126,21 @@ public class Protocol {
     }
     
     /**
-     * Gửi coins của người chơi
+     * Send player's coins
      */
     public String playerCoinsPacket(int coins) {
         return "PlayerCoins," + coins;
     }
     
     /**
-     * Gửi kết quả mua skin
+     * Send buy result
      */
     public String buyResultPacket(boolean success, String msg, int newBalance) {
         return "BuyResult," + (success ? "success" : "failed") + "," + msg + "," + newBalance;
     }
     
     /**
-     * Gửi danh sách skins của người chơi
+     * Send list of player's skins
      */
     public String playerSkinsPacket(java.util.List<dao.ShopDAO.PlayerSkin> skins) {
         StringBuilder sb = new StringBuilder("PlayerSkins");
@@ -151,9 +151,22 @@ public class Protocol {
     }
     
     /**
-     * Gửi skin đang equip
+     * Send equipped skin
      */
     public String equippedSkinPacket(String skinFolder) {
         return "EquippedSkin," + skinFolder;
+    }
+
+    /**
+     * UpdatePacket
+     * @param username the username of the player
+     * @param x the x coordinate of the player
+     * @param y the y coordinate of the player
+     * @param dir the direction of the player
+     * @return the message
+     */
+    public String UpdatePacket(String username, int x, int y, int dir) {
+        message = "Update," + username + "," + x + "," + y + "," + dir;
+        return message;
     }
 }

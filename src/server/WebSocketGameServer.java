@@ -277,21 +277,7 @@ public class WebSocketGameServer extends WebSocketServer {
         sendAllClientsInMap(p.getWebSocket(), map);
         
         // === FIX: Sync Skins on Teleport ===
-        // 1. Send this player's skin to everyone else in the new map
-        String mySkin = shopDAO.getEquippedSkin(username);
-        for (ClientInfo player : playerOnline) {
-            if (player != null && !player.getUsername().equals(username) && player.getMap().equals(map)) {
-                sendToClient(player.getWebSocket(), "ChangeSkin," + username + "," + mySkin);
-            }
-        }
-        
-        // 2. Send skins of everyone in the new map to this player
-        for (ClientInfo player : playerOnline) {
-            if (player != null && !player.getUsername().equals(username) && player.getMap().equals(map)) {
-                String otherSkin = shopDAO.getEquippedSkin(player.getUsername());
-                sendToClient(p.getWebSocket(), "ChangeSkin," + player.getUsername() + "," + otherSkin);
-            }
-        }
+        syncSkinsOnJoinMap(p, map);
         // ===================================
 
 
@@ -357,24 +343,54 @@ public class WebSocketGameServer extends WebSocketServer {
     private void handleWinMaze(String sentence) {
         String username = sentence.substring(7);
 
+        // Find winner
         ClientInfo p = null;
         for (ClientInfo player : playerOnline) {
             if (player != null && player.getUsername().equals(username)) {
                 p = player;
-                player.setMap("lobby");
                 break;
             }
         }
 
         assert p != null;
-
-        broadcastMessage(protocol.NewClientPacket(username, 1645, 754, -1, playerOnline.size() + 1, p.getMap()));
+        
+        // Broadcast win message
+        broadcastMessage("MazeWin," + username);
+        
+        // Add points
         playerService.updatePoint(username, 50);
         sendLeaderBoardToAllClient();
-        sendAllClientsInMap(p.getWebSocket(), "lobby");
-        broadcastMessage("MazeWin," + username);
-        teleportAllPlayerInMapToMap("maze", "lobby");
+        
+        // Teleport everyone else (LOSERS) to lobby immediately
+        // The winner will be teleported when they send TeleportToMap (on pressing Space)
+        teleportAllOtherPlayersInMapToMap("maze", "lobby", username);
+        
         winMaze = true;
+    }
+    
+    public void teleportAllOtherPlayersInMapToMap(String map, String map2, String excludeUsername) {
+        for (ClientInfo player : playerOnline) {
+            // Check if player is in the source map AND is not the excluded user
+            if (player.getMap().equals(map) && !player.getUsername().equals(excludeUsername)) {
+                
+                player.setMap(map2);
+                // FIX: Update server-side coordinates to lobby spawn so future getX()/getY() calls return correct values
+                player.setPosX(1645);
+                player.setPosY(754);
+                
+                // Send teleport packet to this player
+                sendToClient(player.getWebSocket(), protocol.teleportPacket(player.getUsername(), map2, 1645, 754));
+                
+                // Broadcast presence to lobby
+                broadcastMessage(protocol.NewClientPacket(player.getUsername(), 1645, 754, -1, playerOnline.size() + 1, player.getMap()));
+                
+                // Send lobby entities to this player
+                sendAllClientsInMap(player.getWebSocket(), map2);
+                
+                // Sync skins
+                syncSkinsOnJoinMap(player, map2);
+            }
+        }
     }
 
     private void handleBulletCollision(String sentence) {
@@ -492,6 +508,9 @@ public class WebSocketGameServer extends WebSocketServer {
             for (ClientInfo p : playerOnline) {
                 if (p.getUsername().equals(username)) {
                     p.setMap("lobby");
+                    // FIX: Update winner's position too so they appear correctly to others
+                    p.setPosX(1645);
+                    p.setPosY(754);
                     winner = p;
                     break;
                 }
@@ -502,6 +521,8 @@ public class WebSocketGameServer extends WebSocketServer {
                 broadcastMessage(protocol.NewClientPacket(username, 1645, 754, -1, playerOnline.size() + 1, "lobby"));
                 // Send lobby entities to winner
                 sendAllClientsInMap(winner.getWebSocket(), "lobby");
+                // Sync skins for winner in lobby
+                syncSkinsOnJoinMap(winner, "lobby");
             }
             
             // Teleport everyone else currently in maze to lobby
@@ -615,9 +636,15 @@ public class WebSocketGameServer extends WebSocketServer {
         for (ClientInfo player : playerOnline) {
             if (player.getMap().equals(map)) {
                 player.setMap(map2);
+                // FIX: Update coordinates for this method too
+                player.setPosX(1645);
+                player.setPosY(754);
+                
                 sendToClient(player.getWebSocket(), protocol.teleportPacket(player.getUsername(), map2, 1645, 754));
                 broadcastMessage(protocol.NewClientPacket(player.getUsername(), 1645, 754, -1, playerOnline.size() + 1, player.getMap()));
                 sendAllClientsInMap(player.getWebSocket(), map2);
+                // Sync skins for teleported player
+                syncSkinsOnJoinMap(player, map2);
             }
         }
     }
@@ -656,6 +683,8 @@ public class WebSocketGameServer extends WebSocketServer {
                 int y = playerOnline.get(i).getY();
                 int dir = playerOnline.get(i).getDir();
                 sendToClient(conn, protocol.NewClientPacket(username, x, y, dir, i + 1, map));
+                // Force sync position for static players (fixes invisible bug)
+                sendToClient(conn, protocol.UpdatePacket(username, x, y, dir));
             }
         }
     }
@@ -795,9 +824,9 @@ public class WebSocketGameServer extends WebSocketServer {
                         int id = nextMonsterId++;
                         
                         // Track monster on server
+
                         MonsterData monster = new MonsterData(id, type, x, y);
                         huntMonsters.put(id, monster);
-                        
                         broadcastToMap("hunt", "SpawnMonster," + id + "," + type + "," + x + "," + y);
                     }
                     
@@ -967,5 +996,24 @@ public class WebSocketGameServer extends WebSocketServer {
             .forEach(entry -> sb.append(",").append(entry.getKey()).append(":").append(entry.getValue()));
             
         broadcastToMap("hunt", sb.toString());
+    }
+    
+    // === FIX: Skin Synchronization Helper ===
+    private void syncSkinsOnJoinMap(ClientInfo player, String map) {
+        if (player == null) return;
+        
+        String username = player.getUsername();
+        String mySkin = shopDAO.getEquippedSkin(username);
+        
+        // 1. Send this player's skin to everyone else in the new map
+        for (ClientInfo other : playerOnline) {
+            if (other != null && !other.getUsername().equals(username) && other.getMap().equals(map)) {
+                sendToClient(other.getWebSocket(), "ChangeSkin," + username + "," + mySkin);
+                
+                // 2. Send valid skins of other players in the map to this player
+                String otherSkin = shopDAO.getEquippedSkin(other.getUsername());
+                sendToClient(player.getWebSocket(), "ChangeSkin," + other.getUsername() + "," + otherSkin);
+            }
+        }
     }
 }
