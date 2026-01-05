@@ -45,6 +45,11 @@ public class WebSocketGameServer extends WebSocketServer {
     private MazeGen mazeGen = new MazeGen(10, 20);
     private boolean winMaze = true;
 
+    // Maze Timer (đồng bộ thời gian giữa các người chơi)
+    private java.util.Timer mazeTimer;
+    private int mazeTimeRemaining = 120; // 2 phút
+    private boolean mazeActive = false;
+
     public WebSocketGameServer(int port) {
         super(new InetSocketAddress(port));
         playerOnline = new ArrayList<ClientInfo>();
@@ -334,6 +339,14 @@ public class WebSocketGameServer extends WebSocketServer {
             mazeGen = new MazeGen(10, 20);
             mazeGen.solve();
             winMaze = false;
+            
+            // Start maze timer khi có người chơi đầu tiên vào maze mới
+            startMazeTimer();
+        } else {
+            // Nếu maze đang active, gửi thời gian hiện tại cho người chơi mới
+            if (mazeActive && p != null) {
+                sendToClient(p.getWebSocket(), "MazeTime," + mazeTimeRemaining);
+            }
         }
 
         assert p != null;
@@ -366,6 +379,9 @@ public class WebSocketGameServer extends WebSocketServer {
         teleportAllOtherPlayersInMapToMap("maze", "lobby", username);
         
         winMaze = true;
+        
+        // Stop maze timer
+        stopMazeTimer();
     }
     
     public void teleportAllOtherPlayersInMapToMap(String map, String map2, String excludeUsername) {
@@ -914,6 +930,41 @@ public class WebSocketGameServer extends WebSocketServer {
         huntActive = false;
         huntMonsters.clear();
         nextMonsterId = 1;
+    }
+    
+    // === MAZE Timer Methods (đồng bộ thời gian giữa các người chơi) ===
+    
+    private void startMazeTimer() {
+        if (mazeActive) return;
+        mazeActive = true;
+        mazeTimeRemaining = 120; // 2 phút
+        
+        mazeTimer = new java.util.Timer();
+        mazeTimer.scheduleAtFixedRate(new java.util.TimerTask() {
+            @Override
+            public void run() {
+                if (mazeTimeRemaining > 0) {
+                    mazeTimeRemaining--;
+                    // Broadcast time to all players in "maze" map
+                    broadcastToMap("maze", "MazeTime," + mazeTimeRemaining);
+                } else {
+                    // Time's up - broadcast và dừng timer
+                    broadcastToMap("maze", "MazeTimeUp");
+                    stopMazeTimer();
+                }
+            }
+        }, 1000, 1000);
+        
+        System.out.println("Maze timer started: 120 seconds");
+    }
+    
+    private void stopMazeTimer() {
+        if (mazeTimer != null) {
+            mazeTimer.cancel();
+            mazeTimer = null;
+        }
+        mazeActive = false;
+        System.out.println("Maze timer stopped");
     }
     
     private void broadcastToMap(String mapName, String message) {
