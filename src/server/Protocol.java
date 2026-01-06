@@ -98,7 +98,7 @@ public class Protocol {
      * @return the message
      */
     public String mazeMapPacket(String msg) {
-        message = "Maze" + msg;
+        message = "MazeMap," + msg;
         return message;
     }
 
