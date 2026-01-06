@@ -22,6 +22,9 @@ import java.util.Map;
  */
 public class WebSocketGameServer extends WebSocketServer {
 
+    // Maximum number of players allowed on the server
+    private static final int MAX_PLAYERS = 20;
+
     private ArrayList<ClientInfo> playerOnline;
     private Map<WebSocket, String> connectionAuthMap; // Track authentication per connection
     private Protocol protocol;
@@ -205,6 +208,13 @@ public class WebSocketGameServer extends WebSocketServer {
 
     private void handleHello(WebSocket conn, String sentence, int defaultX, int defaultY) {
         String username = sentence.substring(5, sentence.length());
+        
+        // Check if server is full
+        if (playerOnline.size() >= MAX_PLAYERS) {
+            sendToClient(conn, "ServerFull," + MAX_PLAYERS);
+            System.out.println("Server full! Rejected player: " + username + " (" + playerOnline.size() + "/" + MAX_PLAYERS + ")");
+            return;
+        }
         
         // Store the authenticated username for this connection
         connectionAuthMap.put(conn, username);
